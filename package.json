@@ -6,6 +6,7 @@
     "start": "npm run build:win && dotenv -e .env -- node ./apps/host-main/build/index.mjs",
     "start:dev": "dotenv -e .env -- node ./apps/host-main/build/index.mjs",
     "start:x": "npm run build:x && dotenv -e .env -- node ./apps/host-main/build/index.mjs",
+    "deploy": "dotenv -e .env -- node ./apps/host-main/build/index.mjs",
     "start:win": "npm run pm2:stop && npm run build:win && npm run pm2:start",
     "pm2:start": "pm2 start ./config/ecosystem.config.js",
     "pm2:stop": "pm2 kill",

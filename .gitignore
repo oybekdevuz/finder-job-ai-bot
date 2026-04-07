@@ -5,13 +5,10 @@ logs/*
 !logs/.gitkeep
 node_modules
 .DS_Store
-build/*
-!build/.gitkeep
 error.txt
 snapshots
 playwright-report
 test-results
 note.txt
 tmp
-build
 test.log
