@@ -5,7 +5,6 @@
   "scripts": {
     "start": "npm run build:win && dotenv -e .env -- node ./apps/host-main/build/index.mjs",
     "start:dev": "dotenv -e .env -- node ./apps/host-main/build/index.mjs",
-    "start:pdf": "npx --yes tsx tools/pdf-parser/index.ts",
     "start:x": "npm run build:x && dotenv -e .env -- node ./apps/host-main/build/index.mjs",
     "start:win": "npm run pm2:stop && npm run build:win && npm run pm2:start",
     "pm2:start": "pm2 start ./config/ecosystem.config.js",
@@ -18,7 +17,8 @@
   },
   "workspaces": [
     "./modules/*",
-    "./apps/*"
+    "./apps/*",
+    "./packages/*"
   ],
   "devDependencies": {
     "@rollup/plugin-typescript": "11.1.6",
@@ -27,8 +27,7 @@
     "rollup": "3.29.4",
     "rollup-plugin-dts": "6.1.1",
     "rollup-plugin-inject-process-env": "1.3.1",
-    "rollup-plugin-peer-deps-external": "2.2.4",
-    "tslib": "2.7.0"
+    "rollup-plugin-peer-deps-external": "2.2.4"
   },
   "dependencies": {
     "@hono/node-server": "1.13.7",
@@ -36,19 +35,14 @@
     "@langchain/core": "^0.3.62",
     "@langchain/ollama": "0.2.0",
     "@langchain/openai": "0.4.8",
-    "@tensorflow/tfjs-backend-wasm": "4.22.0",
-    "@tensorflow/tfjs-core": "4.22.0",
     "agent-swarm-kit": "1.1.158",
     "dotenv": "^16.5.0",
     "functools-kit": "1.0.80",
     "hono": "4.6.13",
     "ioredis": "5.4.2",
-    "ollama": "0.5.11",
     "openai": "4.82.0",
-    "pdf-parse": "^2.4.5",
     "pinolog": "1.0.4",
     "telegram": "^2.26.22",
-    "ws": "8.18.0",
     "zod": "3.24.1"
   }
 }

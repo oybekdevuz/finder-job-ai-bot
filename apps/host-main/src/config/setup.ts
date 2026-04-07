@@ -1,15 +1,9 @@
-import { setBackend } from "@tensorflow/tfjs-core";
 import { createLogger } from "pinolog";
-
-import "@tensorflow/tfjs-backend-wasm";
 import {
   dumpClientPerformance,
   setConfig,
   swarm,
 } from "agent-swarm-kit";
-
-
-setBackend("wasm");
 
 setConfig({
   CC_KEEP_MESSAGES: 50,
