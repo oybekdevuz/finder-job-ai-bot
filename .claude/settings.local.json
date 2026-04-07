@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run:*)",
+      "Bash(pm2 logs:*)",
+      "Bash(mkdir:*)",
+      "Bash(npm install)",
+      "Bash(node --max-old-space-size=512 node_modules/.bin/tsx:*)",
+      "Bash(npx --yes tsx:*)",
+      "Bash(npx tsx:*)",
+      "Bash(node:*)",
+      "Bash(npm ls:*)"
+    ]
+  }
+}

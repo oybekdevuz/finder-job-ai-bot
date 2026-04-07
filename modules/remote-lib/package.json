@@ -1,0 +1,21 @@
+{
+  "name": "@modules/remote-lib",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "rollup -c"
+  },
+  "type": "module",
+  "module": "build/index.mjs",
+  "source": "src/index.ts",
+  "types": "./types.d.ts",
+  "exports": {
+    "types": "./types.d.ts",
+    "import": "./build/index.mjs",
+    "default": "./build/index.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
