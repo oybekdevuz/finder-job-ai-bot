@@ -1,19 +1,5 @@
 declare function setSendToChannel(fn: (message: string) => Promise<void>): void;
 
-interface ISessionMemory {
-    locale: "en" | "uz" | "ru";
-}
-
-declare enum StorageName {
-    LegalDocsStorageUz = "legal_docs_storage_uz",
-    LegalDocsStorageRu = "legal_docs_storage_ru"
-}
-
-declare enum EmbeddingName {
-    NomicEmbedding = "nomic_embedding",
-    OpenAIEmbedding = "openai_embedding"
-}
-
 declare enum AgentName {
     TriageAgentEn = "triage_agent_en",
     TriageAgentUz = "triage_agent_uz",
@@ -41,11 +27,6 @@ declare enum CompletionName {
     GeminiCompletion = "gemini_completion"
 }
 
-declare enum PolicyName {
-    RussiaPolicy = "russia_policy",
-    CrimeaPolicy = "crimea_policy"
-}
-
 declare enum SwarmName {
     RootSwarm = "root_swarm",
     RootSwarmEn = "en_swarm",
@@ -53,4 +34,4 @@ declare enum SwarmName {
     RootSwarmRu = "ru_swarm"
 }
 
-export { AgentName, CompletionName, EmbeddingName, type ISessionMemory, PolicyName, StorageName, SwarmName, ToolName, setSendToChannel };
+export { AgentName, CompletionName, SwarmName, ToolName, setSendToChannel };
