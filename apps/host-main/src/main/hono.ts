@@ -11,7 +11,6 @@ const main = async () => {
   if (CC_EXECUTE_TEST) {
     return;
   }
-  app.use("/*", serveStatic({ root: "./apps/host-front/out" }));
 
   const server = serve({
     fetch: app.fetch,

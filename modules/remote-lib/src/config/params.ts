@@ -8,8 +8,6 @@ export const CC_COHERE_API_KEY =
   process.env.CC_COHERE_API_KEY || "nomic-embed-text";
 export const CC_OPENAI_CHAT_MODEL =
   process.env.CC_OPENAI_CHAT_MODEL || "gpt-3.5-turbo";
-export const CC_OPENAI_EMBEDDING_MODEL =
-  process.env.CC_OPENAI_EMBEDDING_MODEL || "text-embedding-ada-002";
 
 export const CC_CLIENT_SESSION_EXPIRE_SECONDS = 7 * 24 * 60 * 60; // 1 week
 

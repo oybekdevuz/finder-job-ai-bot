@@ -27,7 +27,8 @@ export default [
       }),
       typescript({
         tsconfig: "./tsconfig.json",
-        noEmit: true,
+        noEmit: false,
+        outDir: "build"
       }),
       injectProcessEnv(getEnv()),
     ],
