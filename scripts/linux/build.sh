@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Ensure npm is installed
-if ! command -v npm &> /dev/null
+if ! command -v npm > /dev/null 2>&1
 then
     echo "npm could not be found"
     exit 1
