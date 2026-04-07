@@ -3,9 +3,6 @@ declare function parseFloat(value: unknown): number;
 
 export const CC_OPENAI_API_KEY =
   process.env.CC_OPENAI_API_KEY || "nomic-embed-text";
-export const CC_XAI_API_KEY = process.env.CC_XAI_API_KEY || "nomic-embed-text";
-export const CC_COHERE_API_KEY =
-  process.env.CC_COHERE_API_KEY || "nomic-embed-text";
 export const CC_OPENAI_CHAT_MODEL =
   process.env.CC_OPENAI_CHAT_MODEL || "gpt-3.5-turbo";
 
@@ -31,10 +28,5 @@ export const CC_ENABLE_TERMINATE_SESSIONS =
 
 export const CC_WEATHER_API_KEY =
   process.env.CC_WEATHER_API_KEY || "text-embedding-ada-002";
-
-export const CC_GEMINI_API_KEY = process.env.CC_GEMINI_API_KEY || "";
-
-export const CC_GEMINI_CHAT_MODEL =
-  process.env.CC_GEMINI_CHAT_MODEL || "gemini-2.0-flash";
 
 export const CC_CHANNEL_USERNAME = process.env.CC_CHANNEL_USERNAME || "";

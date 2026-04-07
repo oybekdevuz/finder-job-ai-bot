@@ -9,7 +9,6 @@
     "start:win": "npm run pm2:stop && npm run build:win && npm run pm2:start",
     "pm2:start": "pm2 start ./config/ecosystem.config.js",
     "pm2:stop": "pm2 kill",
-    "test": "npm run start && dotenv -e .env -- node ./packages/host-test/build/index.mjs",
     "build:win": ".\\scripts\\win\\build.bat",
     "build:x": "sh ./scripts/linux/build.sh",
     "postinstall": "npm run postinstall:pm2",
@@ -17,8 +16,7 @@
   },
   "workspaces": [
     "./modules/*",
-    "./apps/*",
-    "./packages/*"
+    "./apps/*"
   ],
   "devDependencies": {
     "@rollup/plugin-typescript": "11.1.6",

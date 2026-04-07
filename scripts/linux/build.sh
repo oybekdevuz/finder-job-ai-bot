@@ -29,7 +29,6 @@ build_workspace() {
 
 # Run builds
 build_workspace "modules"
-build_workspace "packages"
 build_workspace "apps"
 
 echo "Build process completed successfully!"
