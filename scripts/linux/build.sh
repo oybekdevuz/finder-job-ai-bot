@@ -7,6 +7,8 @@ then
     exit 1
 fi
 
+npm install
+
 # Build function
 build_workspace() {
     category="$1"
@@ -17,7 +19,7 @@ build_workspace() {
             if [ -d "$d" ] && [ -f "$d/package.json" ]; then
                 name=$(basename "$d")
                 echo "Building $name..."
-                (cd "$d" && npm install && npm run build)
+                (cd "$d" && npm run build)
                 if [ $? -ne 0 ]; then
                     echo "Build failed in $d"
                     exit 1
