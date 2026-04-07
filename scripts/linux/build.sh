@@ -9,12 +9,14 @@ fi
 
 # Build function
 build_workspace() {
-    local category=$1
+    category="$1"
     if [ -d "$category" ]; then
         echo "Processing category: $category"
         for d in "$category"/*; do
+            [ -e "$d" ] || continue
             if [ -d "$d" ] && [ -f "$d/package.json" ]; then
-                echo "Building $(basename "$d")..."
+                name=$(basename "$d")
+                echo "Building $name..."
                 (cd "$d" && npm install && npm run build)
                 if [ $? -ne 0 ]; then
                     echo "Build failed in $d"

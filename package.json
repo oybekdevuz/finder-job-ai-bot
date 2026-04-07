@@ -1,5 +1,7 @@
 {
   "name": "finder-job-ai",
+  "version": "1.0.0",
+  "private": true,
   "scripts": {
     "start": "npm run build:win && dotenv -e .env -- node ./apps/host-main/build/index.mjs",
     "start:dev": "dotenv -e .env -- node ./apps/host-main/build/index.mjs",
