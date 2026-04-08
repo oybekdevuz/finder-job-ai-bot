@@ -595,26 +595,51 @@ async function formatJobPost(originalText, sourceChannel) {
             messages: [
                 {
                     role: "system",
-                    content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va AYNAN quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa, "SKIP" deb yoz.
+                    content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa, "SKIP" deb yoz.
 
-FORMAT (aynan shu tartibda, hech narsa qo'shma, hech narsa olib tashlama):
+MUHIM: Figurali qavslar {} ichidagi so'zlar PLACEHOLDER emas — ularni matndan topilgan haqiqiy ma'lumot bilan ALMASHTIR. Masalan, agar lavozim "SMM menejer" bo'lsa, aynan "SMM menejer" deb yoz.
 
-{Lavozim nomi}
+FORMAT:
+
+LAVOZIM_NOMI
 
 — Ish holati: #aktiv
 
-🏢 Kompaniya: {kompaniya yoki "Ko'rsatilmagan"}
+🏢 Kompaniya: KOMPANIYA_NOMI (topilmasa "Ko'rsatilmagan")
 
-— Ish turi: {Offline/Online/Gibrid}
+— Ish turi: OFFLINE_ONLINE_GIBRID
 
-💰 Maosh: {maosh yoki "Kelishiladi"}
+💰 Maosh: MAOSH_SUMMASI (topilmasa "Kelishiladi")
 
 — Talablar:
-{talablar ro'yxati}
+TALABLAR_ROYXATI
 
-— Murojaat uchun: {aloqa ma'lumotlari}
+— Murojaat uchun: ALOQA_MALUMOTLARI
 
-📍 Manzil: {manzil yoki "Ko'rsatilmagan"}
+📍 Manzil: MANZIL (topilmasa "Ko'rsatilmagan")
+
+🍋Limon Jobs – limonni ishlang!
+
+Bepul e'lon joylang: @limonjobs_admin
+
+MISOL:
+SMM menejer
+
+— Ish holati: #aktiv
+
+🏢 Kompaniya: Najot Ta'lim
+
+— Ish turi: Offline
+
+💰 Maosh: 5-8 mln so'm
+
+— Talablar:
+- 1+ yil tajriba
+- Instagram, Telegram bilimlari
+
+— Murojaat uchun: @admin_hr
+
+📍 Manzil: Toshkent shahri
 
 🍋Limon Jobs – limonni ishlang!
 
