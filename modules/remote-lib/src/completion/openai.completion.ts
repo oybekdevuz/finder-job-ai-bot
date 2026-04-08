@@ -16,7 +16,7 @@ import {
 } from "@langchain/core/messages";
 import { randomString } from "functools-kit";
 import { ChatOpenAI, OpenAIClient } from "@langchain/openai";
-import { CC_OPENAI_API_KEY, CC_OPENAI_CHAT_MODEL } from "src/config/params";
+import { CC_OPENAI_API_KEY, CC_OPENAI_CHAT_MODEL } from "../config/params";
 
 class CustomModel extends ChatOpenAI {
   async getNumTokens(content: string) {

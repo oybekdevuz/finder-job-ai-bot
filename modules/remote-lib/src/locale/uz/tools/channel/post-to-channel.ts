@@ -3,7 +3,7 @@ import {
   commitToolOutput,
   execute,
 } from "agent-swarm-kit";
-import { ToolName } from "src/enum/ToolName";
+import { ToolName } from "../../../../enum/ToolName";
 import { z } from "zod";
 
 const PARAMETER_SCHEMA = z

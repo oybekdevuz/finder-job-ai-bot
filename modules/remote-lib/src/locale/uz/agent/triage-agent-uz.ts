@@ -1,8 +1,8 @@
 import { addAgent, Logger } from "agent-swarm-kit";
 import { str } from "functools-kit";
-import { AgentName } from "src/enum/AgentName";
-import { CompletionName } from "src/enum/CompletionName";
-import { ToolName } from "src/enum/ToolName";
+import { AgentName } from "../../../enum/AgentName";
+import { CompletionName } from "../../../enum/CompletionName";
+import { ToolName } from "../../../enum/ToolName";
 import { POLICY_PROMPT, JOB_FINDER_PROMPT } from "../prompt";
 
 export const AGENT_PROMPT = str.newline([

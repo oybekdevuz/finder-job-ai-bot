@@ -12,11 +12,23 @@ const sourceChannels = (process.env.CC_SOURCE_CHANNELS || "")
   .map((c) => c.trim())
   .filter(Boolean);
 
-const SIX_HOURS = 6 * 60 * 60 * 1000;
+const CRON_INTERVAL = 30 * 60 * 1000; // 30 min (test), production: 90 min
 const POST_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
 
+// Priority channels — take posts even without salary
+const PRIORITY_CHANNELS = ["@techjobs_uz", "@marketingdaishla"];
+
+// Sales-type keywords to deprioritize
+const SALES_KEYWORDS = [
+  "sotuvchi", "sotuv", "call center", "call-center", "telesales",
+  "sotuv menejer", "sales", "продавец", "менеджер по продажам",
+];
+
+const deepseekApiKey = process.env.CC_DEPSEEK_API_KEY;
+
 const openai = new OpenAI({
-  apiKey: process.env.CC_OPENAI_API_KEY,
+  apiKey: deepseekApiKey || process.env.CC_OPENAI_API_KEY,
+  ...(deepseekApiKey && { baseURL: "https://api.deepseek.com" }),
 });
 
 const getRedis = singleshot(
@@ -82,26 +94,51 @@ async function formatJobPost(
       messages: [
         {
           role: "system",
-          content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va AYNAN quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa, "SKIP" deb yoz.
+          content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa, "SKIP" deb yoz.
 
-FORMAT (aynan shu tartibda, hech narsa qo'shma, hech narsa olib tashlama):
+MUHIM: Figurali qavslar {} ichidagi so'zlar PLACEHOLDER emas — ularni matndan topilgan haqiqiy ma'lumot bilan ALMASHTIR. Masalan, agar lavozim "SMM menejer" bo'lsa, aynan "SMM menejer" deb yoz.
 
-{Lavozim nomi}
+FORMAT:
+
+LAVOZIM_NOMI
 
 — Ish holati: #aktiv
 
-🏢 Kompaniya: {kompaniya yoki "Ko'rsatilmagan"}
+🏢 Kompaniya: KOMPANIYA_NOMI (topilmasa "Ko'rsatilmagan")
 
-— Ish turi: {Offline/Online/Gibrid}
+— Ish turi: OFFLINE_ONLINE_GIBRID
 
-💰 Maosh: {maosh yoki "Kelishiladi"}
+💰 Maosh: MAOSH_SUMMASI (topilmasa "Kelishiladi")
 
 — Talablar:
-{talablar ro'yxati}
+TALABLAR_ROYXATI
 
-— Murojaat uchun: {aloqa ma'lumotlari}
+— Murojaat uchun: ALOQA_MALUMOTLARI
 
-📍 Manzil: {manzil yoki "Ko'rsatilmagan"}
+📍 Manzil: MANZIL (topilmasa "Ko'rsatilmagan")
+
+🍋Limon Jobs – limonni ishlang!
+
+Bepul e'lon joylang: @limonjobs_admin
+
+MISOL:
+SMM menejer
+
+— Ish holati: #aktiv
+
+🏢 Kompaniya: Najot Ta'lim
+
+— Ish turi: Offline
+
+💰 Maosh: 5-8 mln so'm
+
+— Talablar:
+- 1+ yil tajriba
+- Instagram, Telegram bilimlari
+
+— Murojaat uchun: @admin_hr
+
+📍 Manzil: Toshkent shahri
 
 🍋Limon Jobs – limonni ishlang!
 
@@ -123,7 +160,197 @@ Bepul e'lon joylang: @limonjobs_admin`,
   }
 }
 
-// Scrape latest posts from source channels
+// Check if a formatted post is a duplicate of recent posts
+async function isDuplicate(formatted: string): Promise<boolean> {
+  const redis = await getRedis();
+  const recentPosts = await redis.lrange("recent_posts", 0, 29);
+  if (!recentPosts.length) return false;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: process.env.CC_OPENAI_CHAT_MODEL || "gpt-4o",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: `Sen ish e'lonlarini solishtiruvchisan. Yangi e'lon bilan mavjud e'lonlarni solishtir. Agar lavozim, kompaniya va manzil bir xil yoki juda o'xshash bo'lsa — "DUPLICATE" deb yoz. Aks holda "UNIQUE" deb yoz. Faqat bitta so'z yoz.`,
+        },
+        {
+          role: "user",
+          content: `YANGI E'LON:\n${formatted}\n\nMAVJUD E'LONLAR:\n${recentPosts.join("\n---\n")}`,
+        },
+      ],
+    });
+
+    const result = response.choices[0]?.message?.content?.trim();
+    return result === "DUPLICATE";
+  } catch (error) {
+    console.error("[Scraper] Duplicate check error:", error);
+    return false;
+  }
+}
+
+// Save formatted post to recent list for duplicate checking
+async function saveToRecent(formatted: string): Promise<void> {
+  const redis = await getRedis();
+  await redis.lpush("recent_posts", formatted);
+  await redis.ltrim("recent_posts", 0, 49); // keep last 50
+}
+
+interface CandidatePost {
+  channel: string;
+  msgId: number;
+  text: string;
+  date: number;
+}
+
+// Collect unscraped posts from all source channels (1-2 days old)
+async function collectCandidates(): Promise<CandidatePost[]> {
+  const candidates: CandidatePost[] = [];
+  const oneDayAgo = Math.floor(Date.now() / 1000 - 24 * 60 * 60);
+  const twoDaysAgo = Math.floor(Date.now() / 1000 - 48 * 60 * 60);
+
+  for (const channel of sourceChannels) {
+    try {
+      console.log(`[Scraper] Reading from ${channel}...`);
+
+      const messages = await client.getMessages(channel, {
+        limit: 50,
+        offsetDate: oneDayAgo,
+      });
+
+      for (const msg of messages) {
+        if (!msg.text || msg.text.length < 30) continue;
+        if (!msg.date || msg.date < twoDaysAgo) break;
+
+        const alreadyScraped = await isAlreadyScraped(channel, msg.id);
+        if (alreadyScraped) continue;
+
+        candidates.push({
+          channel,
+          msgId: msg.id,
+          text: msg.text,
+          date: msg.date,
+        });
+      }
+
+      // Delay between channels to avoid flood
+      await new Promise((r) => setTimeout(r, 3_000));
+    } catch (error: any) {
+      if (error?.seconds) {
+        console.log(`[Scraper] FloodWait: waiting ${error.seconds}s...`);
+        await new Promise((r) => setTimeout(r, error.seconds * 1000));
+      } else {
+        console.error(`[Scraper] Error reading ${channel}:`, error);
+      }
+    }
+  }
+
+  return candidates;
+}
+
+// Get recent post categories to ensure diversity
+async function getRecentCategories(): Promise<string[]> {
+  const redis = await getRedis();
+  return await redis.lrange("recent_categories", 0, 2);
+}
+
+async function saveCategory(category: string): Promise<void> {
+  const redis = await getRedis();
+  await redis.lpush("recent_categories", category);
+  await redis.ltrim("recent_categories", 0, 9);
+}
+
+// Use AI to select best 1-2 posts from candidates
+async function selectBestPosts(
+  candidates: CandidatePost[]
+): Promise<{ index: number; formatted: string; category: string }[]> {
+  const recentCategories = await getRecentCategories();
+  const recentPosts = await (await getRedis()).lrange("recent_posts", 0, 29);
+
+  const candidateList = candidates
+    .map(
+      (c, i) =>
+        `[${i}] Kanal: ${c.channel} | Sana: ${new Date(c.date * 1000).toISOString()}\n${c.text}`
+    )
+    .join("\n---\n");
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: process.env.CC_OPENAI_CHAT_MODEL || "gpt-4o",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content: `Sen ish e'lonlarini saralovchisan. Berilgan nomzodlardan eng yaxshi 1-2 tasini tanlashing kerak.
+
+SARALASH QOIDALARI (muhimlik tartibi bo'yicha):
+
+1. DUBLIKAT TEKSHIRISH: Agar nomzod MAVJUD E'LONLAR bilan bir xil lavozim, kompaniya, manzilga ega bo'lsa — TANLAMAGIN.
+
+2. MAOSH USTUNLIGI: Maosh/oylik narxi ko'rsatilgan e'lonlar birinchi. Eng yuqori maoshni olish.
+
+3. PRIORITY KANALLAR: ${PRIORITY_CHANNELS.join(", ")} kanallaridagi e'lonlarni maosh ko'rsatilmagan bo'lsa ham olish mumkin.
+
+4. FALLBACK: Agar priority kanallarda bugun e'lon yo'q bo'lsa — boshqa kanallardan maosh bo'yicha, keyin maoshsizlarni vaqti bo'yicha (birinchi chiqqanini) olish.
+
+5. XILMA-XILLIK: Oxirgi 3 ta post kategoriyalari: [${recentCategories.join(", ")}]. Ulardan farqli kategoriya tanlashga harakat qil. Ketma-ket 3 ta bir xil kategoriya bo'lmasligi kerak.
+
+6. SOTUV DEPRIORITIZATSIYA: Sotuvchi, call center, sotuv menejer, sales kabi e'lonlar juda ko'p. Iloji boricha boshqa turdagi vakansiyalarni birinchi ol. Sotuv vakansiyalarini faqat boshqa variant bo'lmaganda ol.
+
+JAVOB FORMATI (faqat JSON, boshqa hech narsa yozma):
+[
+  {
+    "index": 0,
+    "category": "dasturchi",
+    "reason": "qisqa sabab"
+  }
+]
+
+Agar hech biri mos kelmasa, bo'sh massiv qaytar: []`,
+        },
+        {
+          role: "user",
+          content: `NOMZODLAR:\n${candidateList}\n\nMAVJUD E'LONLAR (dublikat uchun):\n${recentPosts.length ? recentPosts.join("\n---\n") : "Yo'q"}`,
+        },
+      ],
+    });
+
+    const result = response.choices[0]?.message?.content?.trim();
+    if (!result) return [];
+
+    const selections: { index: number; category: string; reason: string }[] =
+      JSON.parse(result);
+
+    // Format selected posts
+    const output: { index: number; formatted: string; category: string }[] = [];
+
+    for (const sel of selections.slice(0, 2)) {
+      const candidate = candidates[sel.index];
+      if (!candidate) continue;
+
+      const formatted = await formatJobPost(candidate.text, candidate.channel);
+      if (!formatted) continue;
+
+      output.push({
+        index: sel.index,
+        formatted,
+        category: sel.category,
+      });
+
+      console.log(
+        `[Scraper] Selected: [${sel.category}] from ${candidate.channel}#${candidate.msgId} — ${sel.reason}`
+      );
+    }
+
+    return output;
+  } catch (error) {
+    console.error("[Scraper] AI selection error:", error);
+    return [];
+  }
+}
+
+// Scrape, select best posts, and publish
 async function scrapeSourceChannels(): Promise<void> {
   if (!sourceChannels.length) {
     console.log("[Scraper] No source channels configured");
@@ -135,54 +362,51 @@ async function scrapeSourceChannels(): Promise<void> {
     return;
   }
 
-  console.log(
-    `[Scraper] Scraping ${sourceChannels.length} source channels...`
-  );
+  // 1. Collect all candidates from all channels
+  const candidates = await collectCandidates();
+  console.log(`[Scraper] Found ${candidates.length} candidates`);
 
-  for (const channel of sourceChannels) {
+  if (!candidates.length) {
+    console.log("[Scraper] No new candidates found");
+    return;
+  }
+
+  // 2. AI selects best 1-2
+  const selected = await selectBestPosts(candidates);
+  console.log(`[Scraper] AI selected ${selected.length} posts`);
+
+  // 3. Publish selected posts
+  for (const sel of selected) {
+    const candidate = candidates[sel.index];
+
     try {
-      console.log(`[Scraper] Reading from ${channel}...`);
+      const sent = await client.sendMessage(channelUsername, {
+        message: sel.formatted,
+      });
 
-      const messages = await client.getMessages(channel, { limit: 20 });
+      await saveToRecent(sel.formatted);
+      await saveCategory(sel.category);
+      await savePostMapping(candidate.channel, candidate.msgId, sent.id);
 
-      let newPosts = 0;
+      console.log(
+        `[Scraper] Posted [${sel.category}] from ${candidate.channel}#${candidate.msgId} → ${channelUsername}#${sent.id}`
+      );
 
-      for (const msg of messages) {
-        if (!msg.text || msg.text.length < 30) continue;
-
-        const alreadyScraped = await isAlreadyScraped(channel, msg.id);
-        if (alreadyScraped) continue;
-
-        // Format the post
-        const formatted = await formatJobPost(msg.text, channel);
-        if (!formatted) {
-          // Mark as scraped even if not a job post, to avoid re-processing
-          const redis = await getRedis();
-          await redis.setex(`scraped:${channel}:${msg.id}`, POST_TTL, "1");
-          continue;
-        }
-
-        // Post to target channel
-        const sent = await client.sendMessage(channelUsername, {
-          message: formatted,
-        });
-
-        // Save mapping
-        await savePostMapping(channel, msg.id, sent.id);
-        newPosts++;
-
-        console.log(
-          `[Scraper] Posted from ${channel}#${msg.id} → ${channelUsername}#${sent.id}`
-        );
-
-        // Small delay to avoid flood
-        await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 10_000));
+    } catch (error: any) {
+      if (error?.seconds) {
+        console.log(`[Scraper] FloodWait: waiting ${error.seconds}s...`);
+        await new Promise((r) => setTimeout(r, error.seconds * 1000));
+      } else {
+        console.error(`[Scraper] Error posting:`, error);
       }
-
-      console.log(`[Scraper] ${channel}: ${newPosts} new posts`);
-    } catch (error) {
-      console.error(`[Scraper] Error scraping ${channel}:`, error);
     }
+  }
+
+  // 4. Mark all candidates as scraped (selected or not)
+  const redis = await getRedis();
+  for (const c of candidates) {
+    await redis.setex(`scraped:${c.channel}:${c.msgId}`, POST_TTL, "1");
   }
 }
 
@@ -223,6 +447,9 @@ async function checkExistingPosts(): Promise<void> {
       } catch {
         sourceExists = false;
       }
+
+      // Delay between post checks
+      await new Promise((r) => setTimeout(r, 3_000));
 
       if (!sourceExists) {
         console.log(
@@ -282,8 +509,21 @@ async function checkExistingPosts(): Promise<void> {
   }
 }
 
+// Check if current time is within posting hours (08:00 - 21:00 Tashkent)
+function isPostingHours(): boolean {
+  const now = new Date();
+  // UTC+5 for Tashkent
+  const tashkentHour = (now.getUTCHours() + 5) % 24;
+  return tashkentHour >= 8 && tashkentHour < 21;
+}
+
 // Main CRON job
 async function runScraper(): Promise<void> {
+  if (!isPostingHours()) {
+    console.log(`[Scraper] Outside posting hours (08:00-21:00 Tashkent), skipping`);
+    return;
+  }
+
   console.log(`[Scraper] Running at ${new Date().toISOString()}`);
 
   try {
@@ -306,15 +546,15 @@ export async function startScraper(): Promise<void> {
     `[Scraper] Configured with ${sourceChannels.length} source channels: ${sourceChannels.join(", ")}`
   );
   console.log(`[Scraper] Target channel: ${channelUsername}`);
-  console.log(`[Scraper] CRON: every 6 hours`);
+  console.log(`[Scraper] Schedule: every 30min (test), 08:00-21:00 Tashkent`);
 
-  // First run after 10 seconds (let everything initialize)
+  // First run after 10 seconds
   setTimeout(() => {
     runScraper();
   }, 10_000);
 
-  // Then every 6 hours
+  // Then on interval
   setInterval(() => {
     runScraper();
-  }, SIX_HOURS);
+  }, CRON_INTERVAL);
 }

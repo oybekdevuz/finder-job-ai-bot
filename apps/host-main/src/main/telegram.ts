@@ -63,12 +63,27 @@ function prompt(question: string): Promise<string> {
 
 export const startTelegramBot = async () => {
   console.log("Starting Telegram userbot...");
+  console.log("[DEBUG] apiId:", apiId, "apiHash:", apiHash ? apiHash.slice(0, 4) + "***" : "MISSING");
+  console.log("[DEBUG] sessionString:", sessionString ? `${sessionString.length} chars` : "EMPTY (first login)");
 
   await client.start({
-    phoneNumber: async () => await prompt("Telefon raqamingizni kiriting: "),
-    password: async () => await prompt("2FA parolingizni kiriting: "),
-    phoneCode: async () => await prompt("Telegram yuborgan kodni kiriting: "),
-    onError: (err) => console.error("Telegram auth error:", err),
+    phoneNumber: async () => {
+      const phone = await prompt("Telefon raqamingizni kiriting: ");
+      console.log("[DEBUG] Phone entered:", phone);
+      return phone;
+    },
+    password: async () => {
+      console.log("[DEBUG] 2FA password requested");
+      return await prompt("2FA parolingizni kiriting: ");
+    },
+    phoneCode: async () => {
+      console.log("[DEBUG] OTP code requested — Telegram should send code now");
+      return await prompt("Telegram yuborgan kodni kiriting: ");
+    },
+    onError: (err) => {
+      console.error("[DEBUG] Telegram auth error:", err);
+      console.error("[DEBUG] Error details:", JSON.stringify(err, null, 2));
+    },
   });
 
   console.log("Telegram userbot connected!");

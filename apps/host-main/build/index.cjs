@@ -506,11 +506,26 @@ function prompt(question) {
 // }
 const startTelegramBot = async () => {
     console.log("Starting Telegram userbot...");
+    console.log("[DEBUG] apiId:", apiId, "apiHash:", apiHash ? apiHash.slice(0, 4) + "***" : "MISSING");
+    console.log("[DEBUG] sessionString:", sessionString ? `${sessionString.length} chars` : "EMPTY (first login)");
     await client.start({
-        phoneNumber: async () => await prompt("Telefon raqamingizni kiriting: "),
-        password: async () => await prompt("2FA parolingizni kiriting: "),
-        phoneCode: async () => await prompt("Telegram yuborgan kodni kiriting: "),
-        onError: (err) => console.error("Telegram auth error:", err),
+        phoneNumber: async () => {
+            const phone = await prompt("Telefon raqamingizni kiriting: ");
+            console.log("[DEBUG] Phone entered:", phone);
+            return phone;
+        },
+        password: async () => {
+            console.log("[DEBUG] 2FA password requested");
+            return await prompt("2FA parolingizni kiriting: ");
+        },
+        phoneCode: async () => {
+            console.log("[DEBUG] OTP code requested — Telegram should send code now");
+            return await prompt("Telegram yuborgan kodni kiriting: ");
+        },
+        onError: (err) => {
+            console.error("[DEBUG] Telegram auth error:", err);
+            console.error("[DEBUG] Error details:", JSON.stringify(err, null, 2));
+        },
     });
     console.log("Telegram userbot connected!");
     // Save session string for future use
@@ -531,10 +546,14 @@ const sourceChannels = (process.env.CC_SOURCE_CHANNELS || "")
     .split(",")
     .map((c) => c.trim())
     .filter(Boolean);
-const SIX_HOURS = 6 * 60 * 60 * 1000;
+const CRON_INTERVAL = 30 * 60 * 1000; // 30 min (test), production: 90 min
 const POST_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
+// Priority channels — take posts even without salary
+const PRIORITY_CHANNELS = ["@techjobs_uz", "@marketingdaishla"];
+const deepseekApiKey = process.env.CC_DEPSEEK_API_KEY;
 const openai = new OpenAI({
-    apiKey: process.env.CC_OPENAI_API_KEY,
+    apiKey: deepseekApiKey || process.env.CC_OPENAI_API_KEY,
+    ...(deepseekApiKey && { baseURL: "https://api.deepseek.com" }),
 });
 const getRedis = functoolsKit.singleshot(() => new Promise((res) => {
     const redis = new Redis({
@@ -617,7 +636,139 @@ Bepul e'lon joylang: @limonjobs_admin`,
         return null;
     }
 }
-// Scrape latest posts from source channels
+// Save formatted post to recent list for duplicate checking
+async function saveToRecent(formatted) {
+    const redis = await getRedis();
+    await redis.lpush("recent_posts", formatted);
+    await redis.ltrim("recent_posts", 0, 49); // keep last 50
+}
+// Collect unscraped posts from all source channels (1-2 days old)
+async function collectCandidates() {
+    const candidates = [];
+    const oneDayAgo = Math.floor(Date.now() / 1000 - 24 * 60 * 60);
+    const twoDaysAgo = Math.floor(Date.now() / 1000 - 48 * 60 * 60);
+    for (const channel of sourceChannels) {
+        try {
+            console.log(`[Scraper] Reading from ${channel}...`);
+            const messages = await client.getMessages(channel, {
+                limit: 50,
+                offsetDate: oneDayAgo,
+            });
+            for (const msg of messages) {
+                if (!msg.text || msg.text.length < 30)
+                    continue;
+                if (!msg.date || msg.date < twoDaysAgo)
+                    break;
+                const alreadyScraped = await isAlreadyScraped(channel, msg.id);
+                if (alreadyScraped)
+                    continue;
+                candidates.push({
+                    channel,
+                    msgId: msg.id,
+                    text: msg.text,
+                    date: msg.date,
+                });
+            }
+            // Delay between channels to avoid flood
+            await new Promise((r) => setTimeout(r, 3000));
+        }
+        catch (error) {
+            if (error?.seconds) {
+                console.log(`[Scraper] FloodWait: waiting ${error.seconds}s...`);
+                await new Promise((r) => setTimeout(r, error.seconds * 1000));
+            }
+            else {
+                console.error(`[Scraper] Error reading ${channel}:`, error);
+            }
+        }
+    }
+    return candidates;
+}
+// Get recent post categories to ensure diversity
+async function getRecentCategories() {
+    const redis = await getRedis();
+    return await redis.lrange("recent_categories", 0, 2);
+}
+async function saveCategory(category) {
+    const redis = await getRedis();
+    await redis.lpush("recent_categories", category);
+    await redis.ltrim("recent_categories", 0, 9);
+}
+// Use AI to select best 1-2 posts from candidates
+async function selectBestPosts(candidates) {
+    const recentCategories = await getRecentCategories();
+    const recentPosts = await (await getRedis()).lrange("recent_posts", 0, 29);
+    const candidateList = candidates
+        .map((c, i) => `[${i}] Kanal: ${c.channel} | Sana: ${new Date(c.date * 1000).toISOString()}\n${c.text}`)
+        .join("\n---\n");
+    try {
+        const response = await openai.chat.completions.create({
+            model: process.env.CC_OPENAI_CHAT_MODEL || "gpt-4o",
+            temperature: 0,
+            messages: [
+                {
+                    role: "system",
+                    content: `Sen ish e'lonlarini saralovchisan. Berilgan nomzodlardan eng yaxshi 1-2 tasini tanlashing kerak.
+
+SARALASH QOIDALARI (muhimlik tartibi bo'yicha):
+
+1. DUBLIKAT TEKSHIRISH: Agar nomzod MAVJUD E'LONLAR bilan bir xil lavozim, kompaniya, manzilga ega bo'lsa — TANLAMAGIN.
+
+2. MAOSH USTUNLIGI: Maosh/oylik narxi ko'rsatilgan e'lonlar birinchi. Eng yuqori maoshni olish.
+
+3. PRIORITY KANALLAR: ${PRIORITY_CHANNELS.join(", ")} kanallaridagi e'lonlarni maosh ko'rsatilmagan bo'lsa ham olish mumkin.
+
+4. FALLBACK: Agar priority kanallarda bugun e'lon yo'q bo'lsa — boshqa kanallardan maosh bo'yicha, keyin maoshsizlarni vaqti bo'yicha (birinchi chiqqanini) olish.
+
+5. XILMA-XILLIK: Oxirgi 3 ta post kategoriyalari: [${recentCategories.join(", ")}]. Ulardan farqli kategoriya tanlashga harakat qil. Ketma-ket 3 ta bir xil kategoriya bo'lmasligi kerak.
+
+6. SOTUV DEPRIORITIZATSIYA: Sotuvchi, call center, sotuv menejer, sales kabi e'lonlar juda ko'p. Iloji boricha boshqa turdagi vakansiyalarni birinchi ol. Sotuv vakansiyalarini faqat boshqa variant bo'lmaganda ol.
+
+JAVOB FORMATI (faqat JSON, boshqa hech narsa yozma):
+[
+  {
+    "index": 0,
+    "category": "dasturchi",
+    "reason": "qisqa sabab"
+  }
+]
+
+Agar hech biri mos kelmasa, bo'sh massiv qaytar: []`,
+                },
+                {
+                    role: "user",
+                    content: `NOMZODLAR:\n${candidateList}\n\nMAVJUD E'LONLAR (dublikat uchun):\n${recentPosts.length ? recentPosts.join("\n---\n") : "Yo'q"}`,
+                },
+            ],
+        });
+        const result = response.choices[0]?.message?.content?.trim();
+        if (!result)
+            return [];
+        const selections = JSON.parse(result);
+        // Format selected posts
+        const output = [];
+        for (const sel of selections.slice(0, 2)) {
+            const candidate = candidates[sel.index];
+            if (!candidate)
+                continue;
+            const formatted = await formatJobPost(candidate.text, candidate.channel);
+            if (!formatted)
+                continue;
+            output.push({
+                index: sel.index,
+                formatted,
+                category: sel.category,
+            });
+            console.log(`[Scraper] Selected: [${sel.category}] from ${candidate.channel}#${candidate.msgId} — ${sel.reason}`);
+        }
+        return output;
+    }
+    catch (error) {
+        console.error("[Scraper] AI selection error:", error);
+        return [];
+    }
+}
+// Scrape, select best posts, and publish
 async function scrapeSourceChannels() {
     if (!sourceChannels.length) {
         console.log("[Scraper] No source channels configured");
@@ -627,42 +778,43 @@ async function scrapeSourceChannels() {
         console.log("[Scraper] No target channel configured");
         return;
     }
-    console.log(`[Scraper] Scraping ${sourceChannels.length} source channels...`);
-    for (const channel of sourceChannels) {
+    // 1. Collect all candidates from all channels
+    const candidates = await collectCandidates();
+    console.log(`[Scraper] Found ${candidates.length} candidates`);
+    if (!candidates.length) {
+        console.log("[Scraper] No new candidates found");
+        return;
+    }
+    // 2. AI selects best 1-2
+    const selected = await selectBestPosts(candidates);
+    console.log(`[Scraper] AI selected ${selected.length} posts`);
+    // 3. Publish selected posts
+    for (const sel of selected) {
+        const candidate = candidates[sel.index];
         try {
-            console.log(`[Scraper] Reading from ${channel}...`);
-            const messages = await client.getMessages(channel, { limit: 20 });
-            let newPosts = 0;
-            for (const msg of messages) {
-                if (!msg.text || msg.text.length < 30)
-                    continue;
-                const alreadyScraped = await isAlreadyScraped(channel, msg.id);
-                if (alreadyScraped)
-                    continue;
-                // Format the post
-                const formatted = await formatJobPost(msg.text, channel);
-                if (!formatted) {
-                    // Mark as scraped even if not a job post, to avoid re-processing
-                    const redis = await getRedis();
-                    await redis.setex(`scraped:${channel}:${msg.id}`, POST_TTL, "1");
-                    continue;
-                }
-                // Post to target channel
-                const sent = await client.sendMessage(channelUsername, {
-                    message: formatted,
-                });
-                // Save mapping
-                await savePostMapping(channel, msg.id, sent.id);
-                newPosts++;
-                console.log(`[Scraper] Posted from ${channel}#${msg.id} → ${channelUsername}#${sent.id}`);
-                // Small delay to avoid flood
-                await new Promise((r) => setTimeout(r, 2000));
-            }
-            console.log(`[Scraper] ${channel}: ${newPosts} new posts`);
+            const sent = await client.sendMessage(channelUsername, {
+                message: sel.formatted,
+            });
+            await saveToRecent(sel.formatted);
+            await saveCategory(sel.category);
+            await savePostMapping(candidate.channel, candidate.msgId, sent.id);
+            console.log(`[Scraper] Posted [${sel.category}] from ${candidate.channel}#${candidate.msgId} → ${channelUsername}#${sent.id}`);
+            await new Promise((r) => setTimeout(r, 10000));
         }
         catch (error) {
-            console.error(`[Scraper] Error scraping ${channel}:`, error);
+            if (error?.seconds) {
+                console.log(`[Scraper] FloodWait: waiting ${error.seconds}s...`);
+                await new Promise((r) => setTimeout(r, error.seconds * 1000));
+            }
+            else {
+                console.error(`[Scraper] Error posting:`, error);
+            }
         }
+    }
+    // 4. Mark all candidates as scraped (selected or not)
+    const redis = await getRedis();
+    for (const c of candidates) {
+        await redis.setex(`scraped:${c.channel}:${c.msgId}`, POST_TTL, "1");
     }
 }
 // Check if source posts still exist, edit target if deleted
@@ -697,6 +849,8 @@ async function checkExistingPosts() {
             catch {
                 sourceExists = false;
             }
+            // Delay between post checks
+            await new Promise((r) => setTimeout(r, 3000));
             if (!sourceExists) {
                 console.log(`[Scraper] Source post ${sourceChannel}#${sourceMessageId} deleted, editing target#${targetMessageId}`);
                 try {
@@ -734,8 +888,19 @@ async function checkExistingPosts() {
         }
     }
 }
+// Check if current time is within posting hours (08:00 - 21:00 Tashkent)
+function isPostingHours() {
+    const now = new Date();
+    // UTC+5 for Tashkent
+    const tashkentHour = (now.getUTCHours() + 5) % 24;
+    return tashkentHour >= 8 && tashkentHour < 21;
+}
 // Main CRON job
 async function runScraper() {
+    if (!isPostingHours()) {
+        console.log(`[Scraper] Outside posting hours (08:00-21:00 Tashkent), skipping`);
+        return;
+    }
     console.log(`[Scraper] Running at ${new Date().toISOString()}`);
     try {
         await scrapeSourceChannels();
@@ -753,15 +918,15 @@ async function startScraper() {
     }
     console.log(`[Scraper] Configured with ${sourceChannels.length} source channels: ${sourceChannels.join(", ")}`);
     console.log(`[Scraper] Target channel: ${channelUsername}`);
-    console.log(`[Scraper] CRON: every 6 hours`);
-    // First run after 10 seconds (let everything initialize)
+    console.log(`[Scraper] Schedule: every 30min (test), 08:00-21:00 Tashkent`);
+    // First run after 10 seconds
     setTimeout(() => {
         runScraper();
     }, 10000);
-    // Then every 6 hours
+    // Then on interval
     setInterval(() => {
         runScraper();
-    }, SIX_HOURS);
+    }, CRON_INTERVAL);
 }
 
 const main = async () => {
@@ -783,3 +948,7 @@ const main = async () => {
     await startScraper();
 };
 main();
+
+console.log("[DEBUG] ENV check — TELEGRAM_API_ID:", process.env.TELEGRAM_API_ID || "MISSING");
+console.log("[DEBUG] ENV check — TELEGRAM_API_HASH:", process.env.TELEGRAM_API_HASH ? "SET" : "MISSING");
+console.log("[DEBUG] ENV check — TELEGRAM_SESSION:", process.env.TELEGRAM_SESSION ? "SET" : "MISSING");

@@ -3,7 +3,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { app, injectWebSocket } from "../config/app";
 import { CC_EXECUTE_TEST, CC_WWWROOT_PORT } from "../config/params";
 
-import "src/routes/session";
+import "../routes/session";
 import { startTelegramBot } from "./telegram";
 import { startScraper } from "./scraper";
 
