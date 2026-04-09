@@ -661,6 +661,46 @@ Bepul e'lon joylang: @limonjobs_admin`,
         return null;
     }
 }
+// Check if a formatted post is a duplicate of recent posts
+async function isDuplicate(formatted) {
+    const redis = await getRedis();
+    const recentPosts = await redis.lrange("recent_posts", 0, 29);
+    if (!recentPosts.length)
+        return false;
+    try {
+        const response = await openai.chat.completions.create({
+            model: process.env.CC_OPENAI_CHAT_MODEL || "gpt-4o",
+            temperature: 0,
+            messages: [
+                {
+                    role: "system",
+                    content: `Sen ish e'lonlarini solishtiruvchisan. Yangi e'lon bilan mavjud e'lonlarni solishtir.
+
+DUPLICATE deb yoz agar:
+- Lavozim bir xil yoki o'xshash (masalan "Video montajyor" va "Videomontajor" bir xil)
+- Kompaniya bir xil
+- Murojaat uchun link, telefon raqam yoki username bir xil
+- Manzil bir xil (masalan "Impact Coworking" va "Toshkent, Impact Coworking")
+- Maosh diapazoni bir xil yoki juda yaqin
+
+Agar yuqoridagilardan KAMIDA 2 tasi mos kelsa — "DUPLICATE".
+Aks holda "UNIQUE".
+Faqat bitta so'z yoz.`,
+                },
+                {
+                    role: "user",
+                    content: `YANGI E'LON:\n${formatted}\n\nMAVJUD E'LONLAR:\n${recentPosts.join("\n---\n")}`,
+                },
+            ],
+        });
+        const result = response.choices[0]?.message?.content?.trim();
+        return result === "DUPLICATE";
+    }
+    catch (error) {
+        console.error("[Scraper] Duplicate check error:", error);
+        return false;
+    }
+}
 // Save formatted post to recent list for duplicate checking
 async function saveToRecent(formatted) {
     const redis = await getRedis();
@@ -813,12 +853,19 @@ async function scrapeSourceChannels() {
     // 2. AI selects best 1-2
     const selected = await selectBestPosts(candidates);
     console.log(`[Scraper] AI selected ${selected.length} posts`);
-    // 3. Publish selected posts
+    // 3. Publish selected posts (with final duplicate check)
     for (const sel of selected) {
         const candidate = candidates[sel.index];
+        // Final duplicate check against already posted content
+        const duplicate = await isDuplicate(sel.formatted);
+        if (duplicate) {
+            console.log(`[Scraper] Duplicate skipped (final check): ${candidate.channel}#${candidate.msgId}`);
+            continue;
+        }
         try {
             const sent = await client.sendMessage(channelUsername, {
                 message: sel.formatted,
+                linkPreview: false,
             });
             await saveToRecent(sel.formatted);
             await saveCategory(sel.category);
