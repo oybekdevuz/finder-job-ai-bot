@@ -19,6 +19,11 @@ export const client = new TelegramClient(
   apiHash,
   {
     connectionRetries: 5,
+    deviceModel: "PC",
+    systemVersion: "Ubuntu 22.04",
+    appVersion: "4.16.4",
+    langCode: "en",
+    systemLangCode: "en-US",
   }
 );
 
