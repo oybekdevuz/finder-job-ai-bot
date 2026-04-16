@@ -4,6 +4,8 @@ import { StringSession } from "telegram/sessions/index.js";
 // import { Chat } from "agent-swarm-kit";
 // import { SwarmName, setSendToChannel } from "@modules/remote-lib";
 import * as readline from "readline";
+import * as fs from "fs";
+import * as path from "path";
 
 declare function parseInt(s: unknown): number;
 
@@ -92,9 +94,24 @@ export const startTelegramBot = async () => {
   const session = client.session.save() as unknown as string;
   if (session && !sessionString) {
     console.log("========================================");
-    console.log("TELEGRAM_SESSION ni .env fayliga saqlang:");
+    console.log("TELEGRAM_SESSION (yangi token):");
     console.log(session);
     console.log("========================================");
+
+    // .env fayliga avtomatik yozish
+    const envPath = path.resolve(process.cwd(), ".env");
+    try {
+      let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
+      if (/^TELEGRAM_SESSION=/m.test(envContent)) {
+        envContent = envContent.replace(/^TELEGRAM_SESSION=.*$/m, `TELEGRAM_SESSION=${session}`);
+      } else {
+        envContent += `\nTELEGRAM_SESSION=${session}`;
+      }
+      fs.writeFileSync(envPath, envContent, "utf-8");
+      console.log(".env fayliga TELEGRAM_SESSION yozildi!");
+    } catch (err) {
+      console.error(".env fayliga yozishda xato:", err);
+    }
   }
 
   // TODO: Private chat handler (hozircha o'chirilgan)
