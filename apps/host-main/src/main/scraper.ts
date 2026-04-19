@@ -12,7 +12,7 @@ const sourceChannels = (process.env.CC_SOURCE_CHANNELS || "")
   .map((c) => c.trim())
   .filter(Boolean);
 
-const CRON_INTERVAL = 30 * 60 * 1000; // 30 min (test), production: 90 min
+const CRON_INTERVAL = 80 * 60 * 1000; // 80 min — exactly one post per interval
 const POST_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
 
 // Priority channels — take posts even without salary
@@ -95,6 +95,8 @@ async function formatJobPost(
         {
           role: "system",
           content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa, "SKIP" deb yoz.
+
+MUHIM FILTR: Agar vakansiya til o'qituvchiligi bilan bog'liq bo'lsa (ingliz tili o'qituvchisi, rus tili o'qituvchisi, koreys tili o'qituvchisi, arab tili o'qituvchisi, nemis tili o'qituvchisi va boshqa til o'qituvchilari, til kursi o'qituvchisi, til repetitori, teacher of English/Russian/Korean va h.k.) — "SKIP" deb yoz. Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.) qabul qilinadi.
 
 MUHIM: Figurali qavslar {} ichidagi so'zlar PLACEHOLDER emas — ularni matndan topilgan haqiqiy ma'lumot bilan ALMASHTIR. Masalan, agar lavozim "SMM menejer" bo'lsa, aynan "SMM menejer" deb yoz.
 
@@ -293,9 +295,11 @@ async function selectBestPosts(
       messages: [
         {
           role: "system",
-          content: `Sen ish e'lonlarini saralovchisan. Berilgan nomzodlardan eng yaxshi 1-2 tasini tanlashing kerak.
+          content: `Sen ish e'lonlarini saralovchisan. Berilgan nomzodlardan FAQAT ENG YAXSHI 1 tasini tanlashing kerak.
 
 SARALASH QOIDALARI (muhimlik tartibi bo'yicha):
+
+0. TIL O'QITUVCHILIGI FILTRI: Til o'qituvchisi, til repetitori, til kursi o'qituvchisi (ingliz, rus, koreys, arab, nemis, xitoy va h.k. tillari) bilan bog'liq e'lonlarni HECH QACHON TANLAMA. Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.).
 
 1. DUBLIKAT TEKSHIRISH: Agar nomzod MAVJUD E'LONLAR bilan bir xil lavozim, kompaniya, manzilga ega bo'lsa — TANLAMAGIN.
 
@@ -309,7 +313,7 @@ SARALASH QOIDALARI (muhimlik tartibi bo'yicha):
 
 6. SOTUV DEPRIORITIZATSIYA: Sotuvchi, call center, sotuv menejer, sales kabi e'lonlar juda ko'p. Iloji boricha boshqa turdagi vakansiyalarni birinchi ol. Sotuv vakansiyalarini faqat boshqa variant bo'lmaganda ol.
 
-JAVOB FORMATI (faqat JSON, boshqa hech narsa yozma):
+JAVOB FORMATI (faqat JSON, boshqa hech narsa yozma — FAQAT 1 TA element):
 [
   {
     "index": 0,
@@ -336,7 +340,7 @@ Agar hech biri mos kelmasa, bo'sh massiv qaytar: []`,
     // Format selected posts
     const output: { index: number; formatted: string; category: string }[] = [];
 
-    for (const sel of selections.slice(0, 2)) {
+    for (const sel of selections.slice(0, 1)) {
       const candidate = candidates[sel.index];
       if (!candidate) continue;
 
@@ -398,9 +402,19 @@ async function scrapeSourceChannels(): Promise<void> {
     }
 
     try {
+      const htmlMessage = sel.formatted
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(
+          "🍋Limon Jobs",
+          '<a href="https://t.me/limon_jobs">🍋Limon Jobs</a>'
+        );
+
       const sent = await client.sendMessage(channelUsername, {
-        message: sel.formatted,
+        message: htmlMessage,
         linkPreview: false,
+        parseMode: "html",
       });
 
       await saveToRecent(sel.formatted);
@@ -565,7 +579,7 @@ export async function startScraper(): Promise<void> {
     `[Scraper] Configured with ${sourceChannels.length} source channels: ${sourceChannels.join(", ")}`
   );
   console.log(`[Scraper] Target channel: ${channelUsername}`);
-  console.log(`[Scraper] Schedule: every 30min (test), 08:00-21:00 Tashkent`);
+  console.log(`[Scraper] Schedule: every 80min (1 post), 08:00-21:00 Tashkent`);
 
   // First run after 10 seconds
   setTimeout(() => {
