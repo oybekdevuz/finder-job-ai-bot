@@ -96,7 +96,12 @@ async function formatJobPost(
           role: "system",
           content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa, "SKIP" deb yoz.
 
-MUHIM FILTR: Agar vakansiya til o'qituvchiligi bilan bog'liq bo'lsa (ingliz tili o'qituvchisi, rus tili o'qituvchisi, koreys tili o'qituvchisi, arab tili o'qituvchisi, nemis tili o'qituvchisi va boshqa til o'qituvchilari, til kursi o'qituvchisi, til repetitori, teacher of English/Russian/Korean va h.k.) — "SKIP" deb yoz. Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.) qabul qilinadi.
+MUHIM FILTR: Quyidagi vakansiyalar uchun "SKIP" deb yoz:
+- Til o'qituvchisi/repetitori/kursi: ingliz tili, rus tili, arab tili, koreys tili, turk tili, nemis tili, xitoy tili, frantsuz tili va boshqa har qanday til o'qituvchisi (teacher of English/Russian/Arabic/Turkish va h.k.)
+- Direktor yordamchisi, assistant to director, помощник директора
+- Bosh buxgalter, chief accountant, главный бухгалтер
+
+Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.) qabul qilinadi.
 
 MUHIM: Figurali qavslar {} ichidagi so'zlar PLACEHOLDER emas — ularni matndan topilgan haqiqiy ma'lumot bilan ALMASHTIR. Masalan, agar lavozim "SMM menejer" bo'lsa, aynan "SMM menejer" deb yoz.
 
@@ -299,7 +304,11 @@ async function selectBestPosts(
 
 SARALASH QOIDALARI (muhimlik tartibi bo'yicha):
 
-0. TIL O'QITUVCHILIGI FILTRI: Til o'qituvchisi, til repetitori, til kursi o'qituvchisi (ingliz, rus, koreys, arab, nemis, xitoy va h.k. tillari) bilan bog'liq e'lonlarni HECH QACHON TANLAMA. Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.).
+0. TAQIQLANGAN VAKANSIYALAR — HECH QACHON TANLAMA:
+- Til o'qituvchisi/repetitori (ingliz, rus, arab, turk, koreys, nemis, xitoy, frantsuz va boshqa har qanday til)
+- Direktor yordamchisi / assistant to director
+- Bosh buxgalter / chief accountant
+Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.) tanlanadi.
 
 1. DUBLIKAT TEKSHIRISH: Agar nomzod MAVJUD E'LONLAR bilan bir xil lavozim, kompaniya, manzilga ega bo'lsa — TANLAMAGIN.
 
