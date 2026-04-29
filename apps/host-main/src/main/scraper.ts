@@ -12,17 +12,13 @@ const sourceChannels = (process.env.CC_SOURCE_CHANNELS || "")
   .map((c) => c.trim())
   .filter(Boolean);
 
-const CRON_INTERVAL = 80 * 60 * 1000; // 80 min — exactly one post per interval
+const CRON_INTERVAL = 80 * 60 * 1000; // exactly 80 min between runs
 const POST_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
+const ADMIN_USERNAME = "@begamov_hasanbek";
+const LIMON_TEXT = "🍋Limon Jobs";
+const LIMON_URL = "https://t.me/limon_jobs";
 
-// Priority channels — take posts even without salary
 const PRIORITY_CHANNELS = ["@techjobs_uz", "@marketingdaishla"];
-
-// Sales-type keywords to deprioritize
-const SALES_KEYWORDS = [
-  "sotuvchi", "sotuv", "call center", "call-center", "telesales",
-  "sotuv menejer", "sales", "продавец", "менеджер по продажам",
-];
 
 const deepseekApiKey = process.env.CC_DEPSEEK_API_KEY;
 
@@ -47,19 +43,35 @@ const getRedis = singleshot(
     })
 );
 
-// Check if a source message was already scraped
+// Returns true if AI left template placeholders unreplaced (e.g. LAVOZIM_NOMI, TASHKENT_CITY)
+function hasPlaceholders(text: string): boolean {
+  return /\b[A-Z]{2,}_[A-Z]{2,}\b/.test(text);
+}
+
+// Notify admin when cron fires but no post is published
+async function notifyAdmin(reason: string): Promise<void> {
+  try {
+    const tashkentTime = new Date(Date.now() + 5 * 60 * 60 * 1000)
+      .toISOString()
+      .replace("T", " ")
+      .slice(0, 16);
+    await client.sendMessage(ADMIN_USERNAME, {
+      message: `⚠️ Scraper: post chiqmadi\n\n🕐 Vaqt (Toshkent): ${tashkentTime}\n📌 Sabab: ${reason}`,
+    });
+  } catch (e) {
+    console.error("[Scraper] Failed to notify admin:", e);
+  }
+}
+
 async function isAlreadyScraped(
   sourceChannel: string,
   messageId: number
 ): Promise<boolean> {
   const redis = await getRedis();
-  const exists = await redis.exists(
-    `scraped:${sourceChannel}:${messageId}`
-  );
+  const exists = await redis.exists(`scraped:${sourceChannel}:${messageId}`);
   return exists === 1;
 }
 
-// Save post mapping to Redis
 async function savePostMapping(
   sourceChannel: string,
   sourceMessageId: number,
@@ -72,21 +84,13 @@ async function savePostMapping(
     targetMessageId,
     postedAt: Date.now(),
   });
-
-  await redis.setex(
-    `scraped:${sourceChannel}:${sourceMessageId}`,
-    POST_TTL,
-    "1"
-  );
+  await redis.setex(`scraped:${sourceChannel}:${sourceMessageId}`, POST_TTL, "1");
   await redis.setex(`post:${targetMessageId}`, POST_TTL, data);
   await redis.sadd("post_ids", String(targetMessageId));
 }
 
-// Format a job post using OpenAI
-async function formatJobPost(
-  originalText: string,
-  sourceChannel: string
-): Promise<string | null> {
+// Format a job post using AI. Returns null if the post should be skipped.
+async function formatJobPost(originalText: string): Promise<string | null> {
   try {
     const response = await openai.chat.completions.create({
       model: process.env.CC_OPENAI_CHAT_MODEL || "gpt-4o",
@@ -94,41 +98,40 @@ async function formatJobPost(
       messages: [
         {
           role: "system",
-          content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa, "SKIP" deb yoz.
+          content: `Sen ish e'lonlarini formatlash bo'yicha yordamchisan. Berilgan matndan ish e'loni ma'lumotlarini ajratib ol va quyidagi formatda qaytar. Agar matn ish e'loni bo'lmasa — "SKIP" deb yoz.
 
-MUHIM FILTR: Quyidagi vakansiyalar uchun "SKIP" deb yoz:
-- Til o'qituvchisi/repetitori/kursi: ingliz tili, rus tili, arab tili, koreys tili, turk tili, nemis tili, xitoy tili, frantsuz tili va boshqa har qanday til o'qituvchisi (teacher of English/Russian/Arabic/Turkish va h.k.)
-- Direktor yordamchisi, assistant to director, помощник директора
-- Bosh buxgalter, chief accountant, главный бухгалтер
+TAQIQLANGAN VAKANSIYALAR — "SKIP" deb yoz:
+- Har qanday til o'qituvchisi yoki repetitori (ingliz, rus, arab, turk, koreys, nemis, xitoy, frantsuz va boshqa tillar)
+- Direktor yordamchisi / assistant to director / помощник директора
+- Bosh buxgalter / chief accountant / главный бухгалтер
 
-Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.) qabul qilinadi.
-
-MUHIM: Figurali qavslar {} ichidagi so'zlar PLACEHOLDER emas — ularni matndan topilgan haqiqiy ma'lumot bilan ALMASHTIR. Masalan, agar lavozim "SMM menejer" bo'lsa, aynan "SMM menejer" deb yoz.
+MUHIM QOIDA: Quyidagi formatda faqat HAQIQIY ma'lumot yoz. Shablondagi so'zlarni (masalan "Lavozim nomi", "Kompaniya nomi" va h.k.) HECH QACHON chiqarma — ularni matndan topilgan haqiqiy qiymat bilan almashtir. Agar biron ma'lumot topilmasa, ko'rsatilgan standart qiymatni ishlat.
 
 FORMAT:
 
-LAVOZIM_NOMI
+Haqiqiy lavozim nomi (matndan ol)
 
 — Ish holati: #aktiv
 
-🏢 Kompaniya: KOMPANIYA_NOMI (topilmasa "Ko'rsatilmagan")
+🏢 Kompaniya: Haqiqiy kompaniya nomi (topilmasa: Ko'rsatilmagan)
 
-— Ish turi: OFFLINE_ONLINE_GIBRID
+— Ish turi: Offline yoki Online yoki Gibrid (matndan ol)
 
-💰 Maosh: MAOSH_SUMMASI (topilmasa "Kelishiladi")
+💰 Maosh: Haqiqiy maosh miqdori (topilmasa: Kelishiladi)
 
 — Talablar:
-TALABLAR_ROYXATI
+- Haqiqiy talab 1
+- Haqiqiy talab 2
 
-— Murojaat uchun: ALOQA_MALUMOTLARI
+— Murojaat uchun: Haqiqiy aloqa ma'lumotlari
 
-📍 Manzil: MANZIL (topilmasa "Ko'rsatilmagan")
+📍 Manzil: Haqiqiy manzil (topilmasa: Ko'rsatilmagan)
 
 🍋Limon Jobs – limonni ishlang!
 
 Bepul e'lon joylang: @limonjobs_admin
 
-MISOL:
+MISOL (bunday formatda yoz):
 SMM menejer
 
 — Ish holati: #aktiv
@@ -160,6 +163,13 @@ Bepul e'lon joylang: @limonjobs_admin`,
 
     const result = response.choices[0]?.message?.content?.trim();
     if (!result || result === "SKIP") return null;
+
+    // Reject if AI left template placeholders unreplaced
+    if (hasPlaceholders(result)) {
+      console.log("[Scraper] Skipping post: placeholders not replaced");
+      return null;
+    }
+
     return result;
   } catch (error) {
     console.error("[Scraper] OpenAI format error:", error);
@@ -167,7 +177,6 @@ Bepul e'lon joylang: @limonjobs_admin`,
   }
 }
 
-// Check if a formatted post is a duplicate of recent posts
 async function isDuplicate(formatted: string): Promise<boolean> {
   const redis = await getRedis();
   const recentPosts = await redis.lrange("recent_posts", 0, 29);
@@ -186,7 +195,7 @@ DUPLICATE deb yoz agar:
 - Lavozim bir xil yoki o'xshash (masalan "Video montajyor" va "Videomontajor" bir xil)
 - Kompaniya bir xil
 - Murojaat uchun link, telefon raqam yoki username bir xil
-- Manzil bir xil (masalan "Impact Coworking" va "Toshkent, Impact Coworking")
+- Manzil bir xil
 - Maosh diapazoni bir xil yoki juda yaqin
 
 Agar yuqoridagilardan KAMIDA 2 tasi mos kelsa — "DUPLICATE".
@@ -208,11 +217,10 @@ Faqat bitta so'z yoz.`,
   }
 }
 
-// Save formatted post to recent list for duplicate checking
 async function saveToRecent(formatted: string): Promise<void> {
   const redis = await getRedis();
   await redis.lpush("recent_posts", formatted);
-  await redis.ltrim("recent_posts", 0, 49); // keep last 50
+  await redis.ltrim("recent_posts", 0, 49);
 }
 
 interface CandidatePost {
@@ -222,7 +230,6 @@ interface CandidatePost {
   date: number;
 }
 
-// Collect unscraped posts from all source channels (1-2 days old)
 async function collectCandidates(): Promise<CandidatePost[]> {
   const candidates: CandidatePost[] = [];
   const oneDayAgo = Math.floor(Date.now() / 1000 - 24 * 60 * 60);
@@ -252,7 +259,6 @@ async function collectCandidates(): Promise<CandidatePost[]> {
         });
       }
 
-      // Delay between channels to avoid flood
       await new Promise((r) => setTimeout(r, 3_000));
     } catch (error: any) {
       if (error?.seconds) {
@@ -267,7 +273,6 @@ async function collectCandidates(): Promise<CandidatePost[]> {
   return candidates;
 }
 
-// Get recent post categories to ensure diversity
 async function getRecentCategories(): Promise<string[]> {
   const redis = await getRedis();
   return await redis.lrange("recent_categories", 0, 2);
@@ -279,10 +284,10 @@ async function saveCategory(category: string): Promise<void> {
   await redis.ltrim("recent_categories", 0, 9);
 }
 
-// Use AI to select best 1-2 posts from candidates
-async function selectBestPosts(
+// Returns the selected post, or a reason string if nothing was selected
+async function selectBestPost(
   candidates: CandidatePost[]
-): Promise<{ index: number; formatted: string; category: string }[]> {
+): Promise<{ index: number; formatted: string; category: string } | string> {
   const recentCategories = await getRecentCategories();
   const recentPosts = await (await getRedis()).lrange("recent_posts", 0, 29);
 
@@ -300,38 +305,32 @@ async function selectBestPosts(
       messages: [
         {
           role: "system",
-          content: `Sen ish e'lonlarini saralovchisan. Berilgan nomzodlardan FAQAT ENG YAXSHI 1 tasini tanlashing kerak.
+          content: `Sen ish e'lonlarini saralovchisan. Berilgan nomzodlardan FAQAT BITTA eng yaxshisini tanlashing kerak.
 
 SARALASH QOIDALARI (muhimlik tartibi bo'yicha):
 
-0. TAQIQLANGAN VAKANSIYALAR — HECH QACHON TANLAMA:
-- Til o'qituvchisi/repetitori (ingliz, rus, arab, turk, koreys, nemis, xitoy, frantsuz va boshqa har qanday til)
-- Direktor yordamchisi / assistant to director
-- Bosh buxgalter / chief accountant
-Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent-maker, operator, administrator, sotuvchi, kuryer va h.k.) tanlanadi.
+0. TAQIQLANGAN — HECH QACHON TANLAMA:
+- Har qanday til o'qituvchisi yoki repetitori (ingliz, rus, arab, turk, koreys, nemis va boshqalar)
+- Direktor yordamchisi
+- Bosh buxgalter
+Faqat zamonaviy kasblar (IT, SMM, dizayner, marketing, menejer, muhandis, analitik, kontent, operator, administrator va h.k.).
 
-1. DUBLIKAT TEKSHIRISH: Agar nomzod MAVJUD E'LONLAR bilan bir xil lavozim, kompaniya, manzilga ega bo'lsa — TANLAMAGIN.
+1. DUBLIKAT TEKSHIRISH: MAVJUD E'LONLAR bilan bir xil lavozim+kompaniya+manzil bo'lsa — TANLAMAGIN.
 
-2. MAOSH USTUNLIGI: Maosh/oylik narxi ko'rsatilgan e'lonlar birinchi. Eng yuqori maoshni olish.
+2. MAOSH USTUNLIGI: Maosh ko'rsatilgan e'lonlar birinchi.
 
-3. PRIORITY KANALLAR: ${PRIORITY_CHANNELS.join(", ")} kanallaridagi e'lonlarni maosh ko'rsatilmagan bo'lsa ham olish mumkin.
+3. PRIORITY KANALLAR: ${PRIORITY_CHANNELS.join(", ")} kanallaridan maoshsiz ham olish mumkin.
 
-4. FALLBACK: Agar priority kanallarda bugun e'lon yo'q bo'lsa — boshqa kanallardan maosh bo'yicha, keyin maoshsizlarni vaqti bo'yicha (birinchi chiqqanini) olish.
+4. FALLBACK: Priority kanalda yo'q bo'lsa — boshqa kanallardan maosh bo'yicha, keyin vaqti bo'yicha.
 
-5. XILMA-XILLIK: Oxirgi 3 ta post kategoriyalari: [${recentCategories.join(", ")}]. Ulardan farqli kategoriya tanlashga harakat qil. Ketma-ket 3 ta bir xil kategoriya bo'lmasligi kerak.
+5. XILMA-XILLIK: Oxirgi kategoriyalar: [${recentCategories.join(", ")}]. Farqli kategoriya tanlashga harakat qil.
 
-6. SOTUV DEPRIORITIZATSIYA: Sotuvchi, call center, sotuv menejer, sales kabi e'lonlar juda ko'p. Iloji boricha boshqa turdagi vakansiyalarni birinchi ol. Sotuv vakansiyalarini faqat boshqa variant bo'lmaganda ol.
+6. SOTUV DEPRIORITIZATSIYA: Sotuvchi, call center, sales — faqat boshqa variant bo'lmaganda ol.
 
-JAVOB FORMATI (faqat JSON, boshqa hech narsa yozma — FAQAT 1 TA element):
-[
-  {
-    "index": 0,
-    "category": "dasturchi",
-    "reason": "qisqa sabab"
-  }
-]
+JAVOB FORMATI — faqat JSON, boshqa hech narsa yozma:
+[{"index": 0, "category": "dasturchi", "reason": "qisqa sabab"}]
 
-Agar hech biri mos kelmasa, bo'sh massiv qaytar: []`,
+Hech biri mos kelmasa: []`,
         },
         {
           role: "user",
@@ -340,119 +339,101 @@ Agar hech biri mos kelmasa, bo'sh massiv qaytar: []`,
       ],
     });
 
-    const result = response.choices[0]?.message?.content?.trim();
-    if (!result) return [];
+    const raw = response.choices[0]?.message?.content?.trim();
+    if (!raw) return "AI bo'sh javob qaytardi (selection)";
 
     const selections: { index: number; category: string; reason: string }[] =
-      JSON.parse(result);
+      JSON.parse(raw);
 
-    // Format selected posts
-    const output: { index: number; formatted: string; category: string }[] = [];
+    if (!selections.length) return "AI hech bir nomzodni tanlamadi (barcha taqiqlangan yoki dublikat)";
 
-    for (const sel of selections.slice(0, 1)) {
-      const candidate = candidates[sel.index];
-      if (!candidate) continue;
+    const sel = selections[0];
+    const candidate = candidates[sel.index];
+    if (!candidate) return `AI noto'g'ri index qaytardi: ${sel.index}`;
 
-      const formatted = await formatJobPost(candidate.text, candidate.channel);
-      if (!formatted) continue;
-
-      output.push({
-        index: sel.index,
-        formatted,
-        category: sel.category,
-      });
-
-      console.log(
-        `[Scraper] Selected: [${sel.category}] from ${candidate.channel}#${candidate.msgId} — ${sel.reason}`
-      );
+    const formatted = await formatJobPost(candidate.text);
+    if (!formatted) {
+      return `Formatlash muvaffaqiyatsiz: ${candidate.channel}#${candidate.msgId} (SKIP yoki placeholder)`;
     }
 
-    return output;
-  } catch (error) {
+    console.log(
+      `[Scraper] Selected: [${sel.category}] from ${candidate.channel}#${candidate.msgId} — ${sel.reason}`
+    );
+
+    return { index: sel.index, formatted, category: sel.category };
+  } catch (error: any) {
     console.error("[Scraper] AI selection error:", error);
-    return [];
+    return `AI xatolik: ${error?.message || error}`;
   }
 }
 
-// Scrape, select best posts, and publish
-async function scrapeSourceChannels(): Promise<void> {
-  if (!sourceChannels.length) {
-    console.log("[Scraper] No source channels configured");
-    return;
-  }
+// Scrape, select best post, and publish. Returns reason string if no post was published.
+async function scrapeAndPost(): Promise<string | null> {
+  if (!sourceChannels.length) return "CC_SOURCE_CHANNELS sozlanmagan";
+  if (!channelUsername) return "CC_CHANNEL_USERNAME sozlanmagan";
 
-  if (!channelUsername) {
-    console.log("[Scraper] No target channel configured");
-    return;
-  }
-
-  // 1. Collect all candidates from all channels
   const candidates = await collectCandidates();
   console.log(`[Scraper] Found ${candidates.length} candidates`);
 
-  if (!candidates.length) {
-    console.log("[Scraper] No new candidates found");
-    return;
-  }
+  if (!candidates.length) return "Yangi nomzodlar topilmadi (barcha kanallar scraped)";
 
-  // 2. AI selects best 1-2
-  const selected = await selectBestPosts(candidates);
-  console.log(`[Scraper] AI selected ${selected.length} posts`);
+  const result = await selectBestPost(candidates);
 
-  // 3. Publish selected posts (with final duplicate check)
-  for (const sel of selected) {
-    const candidate = candidates[sel.index];
-
-    // Final duplicate check against already posted content
-    const duplicate = await isDuplicate(sel.formatted);
-    if (duplicate) {
-      console.log(`[Scraper] Duplicate skipped (final check): ${candidate.channel}#${candidate.msgId}`);
-      continue;
-    }
-
-    try {
-      const htmlMessage = sel.formatted
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(
-          "🍋Limon Jobs",
-          '<a href="https://t.me/limon_jobs">🍋Limon Jobs</a>'
-        );
-
-      const sent = await client.sendMessage(channelUsername, {
-        message: htmlMessage,
-        linkPreview: false,
-        parseMode: "html",
-      });
-
-      await saveToRecent(sel.formatted);
-      await saveCategory(sel.category);
-      await savePostMapping(candidate.channel, candidate.msgId, sent.id);
-
-      console.log(
-        `[Scraper] Posted [${sel.category}] from ${candidate.channel}#${candidate.msgId} → ${channelUsername}#${sent.id}`
-      );
-
-      await new Promise((r) => setTimeout(r, 10_000));
-    } catch (error: any) {
-      if (error?.seconds) {
-        console.log(`[Scraper] FloodWait: waiting ${error.seconds}s...`);
-        await new Promise((r) => setTimeout(r, error.seconds * 1000));
-      } else {
-        console.error(`[Scraper] Error posting:`, error);
-      }
-    }
-  }
-
-  // 4. Mark all candidates as scraped (selected or not)
+  // Mark all candidates as scraped regardless of outcome
   const redis = await getRedis();
   for (const c of candidates) {
     await redis.setex(`scraped:${c.channel}:${c.msgId}`, POST_TTL, "1");
   }
+
+  if (typeof result === "string") return result;
+
+  const candidate = candidates[result.index];
+
+  const duplicate = await isDuplicate(result.formatted);
+  if (duplicate) {
+    return `Dublikat: ${candidate.channel}#${candidate.msgId}`;
+  }
+
+  try {
+    // Build Telegram entities for the Limon Jobs link
+    const linkOffset = result.formatted.indexOf(LIMON_TEXT);
+    const entities: Api.TypeMessageEntity[] =
+      linkOffset >= 0
+        ? [
+            new Api.MessageEntityTextUrl({
+              offset: linkOffset,
+              length: LIMON_TEXT.length,
+              url: LIMON_URL,
+            }),
+          ]
+        : [];
+
+    const sent = await client.sendMessage(channelUsername, {
+      message: result.formatted,
+      linkPreview: false,
+      formattingEntities: entities,
+    });
+
+    await saveToRecent(result.formatted);
+    await saveCategory(result.category);
+    await savePostMapping(candidate.channel, candidate.msgId, sent.id);
+
+    console.log(
+      `[Scraper] Posted [${result.category}] from ${candidate.channel}#${candidate.msgId} → ${channelUsername}#${sent.id}`
+    );
+
+    return null; // success
+  } catch (error: any) {
+    if (error?.seconds) {
+      console.log(`[Scraper] FloodWait: waiting ${error.seconds}s...`);
+      await new Promise((r) => setTimeout(r, error.seconds * 1000));
+      return `FloodWait ${error.seconds}s — post kechiktirildi`;
+    }
+    console.error(`[Scraper] Error posting:`, error);
+    return `Post yuborishda xatolik: ${error?.message || error}`;
+  }
 }
 
-// Check if source posts still exist, edit target if deleted
 async function checkExistingPosts(): Promise<void> {
   const redis = await getRedis();
   const postIds = await redis.smembers("post_ids");
@@ -468,21 +449,17 @@ async function checkExistingPosts(): Promise<void> {
     try {
       const data = await redis.get(`post:${targetIdStr}`);
       if (!data) {
-        // Post expired from Redis, remove from set
         await redis.srem("post_ids", targetIdStr);
         continue;
       }
 
-      const { sourceChannel, sourceMessageId, targetMessageId } =
-        JSON.parse(data);
+      const { sourceChannel, sourceMessageId, targetMessageId } = JSON.parse(data);
 
-      // Try to read the source message
       let sourceExists = true;
       try {
         const msgs = await client.getMessages(sourceChannel, {
           ids: [sourceMessageId],
         });
-        // If message is deleted, getMessages returns empty or message with empty text
         if (!msgs.length || !msgs[0] || !msgs[0].text) {
           sourceExists = false;
         }
@@ -490,7 +467,6 @@ async function checkExistingPosts(): Promise<void> {
         sourceExists = false;
       }
 
-      // Delay between post checks
       await new Promise((r) => setTimeout(r, 3_000));
 
       if (!sourceExists) {
@@ -499,21 +475,15 @@ async function checkExistingPosts(): Promise<void> {
         );
 
         try {
-          // Get current target message
           const targetMsgs = await client.getMessages(channelUsername, {
             ids: [targetMessageId],
           });
 
           if (targetMsgs.length && targetMsgs[0] && targetMsgs[0].text) {
             const currentText = targetMsgs[0].text;
-
-            // Check if already marked as closed
             if (currentText.includes("#yopildi")) continue;
 
-            // Edit: replace #aktiv with #yopildi, remove contact info
             let editedText = currentText.replace("#aktiv", "#yopildi");
-
-            // Replace "Murojaat uchun" line with "Vakansiya yopildi"
             editedText = editedText.replace(
               /— Murojaat uchun:.*(?:\n|$)/,
               "— ❌ Vakansiya yopildi\n"
@@ -527,52 +497,56 @@ async function checkExistingPosts(): Promise<void> {
               })
             );
 
-            console.log(
-              `[Scraper] Marked target#${targetMessageId} as closed`
-            );
+            console.log(`[Scraper] Marked target#${targetMessageId} as closed`);
           }
         } catch (editError) {
-          console.error(
-            `[Scraper] Error editing target#${targetMessageId}:`,
-            editError
-          );
+          console.error(`[Scraper] Error editing target#${targetMessageId}:`, editError);
         }
 
-        // Remove from tracking
         await redis.srem("post_ids", targetIdStr);
         await redis.del(`post:${targetIdStr}`);
       }
     } catch (error) {
-      console.error(
-        `[Scraper] Error checking post ${targetIdStr}:`,
-        error
-      );
+      console.error(`[Scraper] Error checking post ${targetIdStr}:`, error);
     }
   }
 }
 
-// Check if current time is within posting hours (08:00 - 21:00 Tashkent)
 function isPostingHours(): boolean {
   const now = new Date();
-  // UTC+5 for Tashkent
   const tashkentHour = (now.getUTCHours() + 5) % 24;
   return tashkentHour >= 8 && tashkentHour < 21;
 }
 
-// Main CRON job
+let scraperRunning = false;
+
 async function runScraper(): Promise<void> {
   if (!isPostingHours()) {
     console.log(`[Scraper] Outside posting hours (08:00-21:00 Tashkent), skipping`);
     return;
   }
 
+  if (scraperRunning) {
+    console.log(`[Scraper] Already running, skipping this tick`);
+    return;
+  }
+
+  scraperRunning = true;
   console.log(`[Scraper] Running at ${new Date().toISOString()}`);
 
   try {
-    await scrapeSourceChannels();
+    const failReason = await scrapeAndPost();
+    if (failReason) {
+      console.log(`[Scraper] No post published: ${failReason}`);
+      await notifyAdmin(failReason);
+    }
     await checkExistingPosts();
-  } catch (error) {
-    console.error("[Scraper] Error in scraper run:", error);
+  } catch (error: any) {
+    const msg = error?.message || String(error);
+    console.error("[Scraper] Unhandled error:", error);
+    await notifyAdmin(`Kutilmagan xatolik: ${msg}`);
+  } finally {
+    scraperRunning = false;
   }
 
   console.log(`[Scraper] Done`);
