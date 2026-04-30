@@ -342,8 +342,12 @@ Hech biri mos kelmasa: []`,
     const raw = response.choices[0]?.message?.content?.trim();
     if (!raw) return "AI bo'sh javob qaytardi (selection)";
 
+    // Extract JSON array — DeepSeek sometimes wraps it in ```json ... ``` or adds extra text
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return `AI JSON massiv qaytarmadi: ${raw.slice(0, 100)}`;
+
     const selections: { index: number; category: string; reason: string }[] =
-      JSON.parse(raw);
+      JSON.parse(jsonMatch[0]);
 
     if (!selections.length) return "AI hech bir nomzodni tanlamadi (barcha taqiqlangan yoki dublikat)";
 
