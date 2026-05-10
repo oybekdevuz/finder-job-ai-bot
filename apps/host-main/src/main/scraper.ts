@@ -175,34 +175,6 @@ Bepul e'lon joylang: @limonjobs_admin`,
   }
 }
 
-async function isDuplicate(formatted: string): Promise<boolean> {
-  const redis = await getRedis();
-  const recentPosts = await redis.lrange("recent_posts", 0, 19); // last 20 only
-  if (!recentPosts.length) return false;
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: process.env.CC_OPENAI_CHAT_MODEL || "gpt-4o",
-      temperature: 0,
-      messages: [
-        {
-          role: "system",
-          content: `Yangi e'lon bilan mavjud e'lonlarni solishtir.
-"DUPLICATE" deb yoz faqat: lavozim + kompaniya IKKALASI bir xil bo'lsa, yoki murojaat kontakti (username/telefon) bir xil bo'lsa.
-Aks holda "UNIQUE". Faqat bitta so'z.`,
-        },
-        {
-          role: "user",
-          content: `YANGI:\n${formatted}\n\nMAVJUD:\n${recentPosts.join("\n---\n")}`,
-        },
-      ],
-    });
-    return response.choices[0]?.message?.content?.trim() === "DUPLICATE";
-  } catch {
-    return false;
-  }
-}
-
 async function saveToRecent(formatted: string): Promise<void> {
   const redis = await getRedis();
   await redis.lpush("recent_posts", formatted);
@@ -379,12 +351,6 @@ async function scrapeAndPost(): Promise<string | null> {
   }
 
   const candidate = candidates[selected.index];
-
-  const duplicate = await isDuplicate(selected.formatted);
-  if (duplicate) {
-    await markSeen(candidates);
-    return `${candidates.length} ta kandidat ko'rildi — tanlangan post dublikat: ${candidate.channel}#${candidate.msgId}`;
-  }
 
   try {
     const linkOffset = selected.formatted.indexOf(LIMON_TEXT);
