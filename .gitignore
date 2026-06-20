@@ -1,9 +1,11 @@
 .env
+.env.bak*
 logs
 data
 logs/*
 !logs/.gitkeep
 node_modules
+build
 .DS_Store
 error.txt
 snapshots
