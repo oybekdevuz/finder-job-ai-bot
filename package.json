@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "start": "npm run build:win && node --env-file=.env ./apps/host-main/build/index.mjs",
-    "start:pm2": "npm run build:win && pm2 delete backend || true && pm2 start ./config/ecosystem.config.js",
-    "start:x": "pm2 delete backend || true && pm2 start ./config/ecosystem.config.js",
+    "start:pm2": "npm run build:win && pm2 delete limon-job-bot || true && pm2 start ./config/ecosystem.config.js",
+    "start:x": "pm2 delete limon-job-bot || true && pm2 start ./config/ecosystem.config.js",
     "start:xdev": "node --env-file=.env ./apps/host-main/build/index.mjs",
     "build:win": ".\\scripts\\win\\build.bat",
     "build:x": "sh ./scripts/linux/build.sh",

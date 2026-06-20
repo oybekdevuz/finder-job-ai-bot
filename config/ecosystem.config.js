@@ -3,7 +3,7 @@ const fs = require("fs");
 
 const apps = [
   {
-    name: "backend",
+    name: "limon-job-bot",
     exec_mode: "fork",
     instances: "1",
     autorestart: true,
