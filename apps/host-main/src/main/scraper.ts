@@ -21,7 +21,7 @@ const LIMON_URL = "https://t.me/limon_jobs";
 
 const PRIORITY_CHANNELS = ["@techjobs_uz", "@marketingdaishla"];
 
-const deepseekApiKey = process.env.CC_DEPSEEK_API_KEY;
+const deepseekApiKey = process.env.CC_DEEPSEEK_API_KEY;
 
 const openai = new OpenAI({
   apiKey: deepseekApiKey || process.env.CC_OPENAI_API_KEY,
