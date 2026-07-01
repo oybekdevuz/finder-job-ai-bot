@@ -18,6 +18,16 @@ const SEEN_TTL = 24 * 60 * 60;            // 24 hours — unselected candidates
 const ADMIN_USERNAME = "@begamov_hasanbek";
 const LIMON_TEXT = "🍋Limon Jobs";
 const LIMON_URL = "https://t.me/limon_jobs";
+// Substrings that must be rendered bold in the published post
+const BOLD_LABELS = [
+  "Ish holati:",
+  "Kompaniya:",
+  "Ish turi:",
+  "Maosh:",
+  "Talablar:",
+  "Murojaat uchun:",
+  "Manzil:",
+];
 
 const PRIORITY_CHANNELS = ["@techjobs_uz", "@marketingdaishla"];
 
@@ -326,6 +336,48 @@ async function fallbackSelectPost(candidates: CandidatePost[]): Promise<Selected
   return null;
 }
 
+// Appends "kerak" to the job title and builds bold + link formatting entities.
+// Telegram entity offsets are UTF-16 code units, which match JS string indexOf/length.
+function buildJobMessage(formatted: string): {
+  message: string;
+  entities: Api.TypeMessageEntity[];
+} {
+  const lines = formatted.split("\n");
+  const titleIdx = lines.findIndex((l) => l.trim().length > 0);
+  if (titleIdx >= 0) {
+    const title = lines[titleIdx].trim();
+    lines[titleIdx] = /kerak\s*$/i.test(title) ? title : `${title} kerak`;
+  }
+  const message = lines.join("\n");
+
+  const entities: Api.TypeMessageEntity[] = [];
+  const addBold = (text: string) => {
+    const offset = message.indexOf(text);
+    if (offset >= 0) {
+      entities.push(new Api.MessageEntityBold({ offset, length: text.length }));
+    }
+  };
+
+  // Bold job title
+  if (titleIdx >= 0) addBold(lines[titleIdx]);
+  // Bold section labels
+  for (const label of BOLD_LABELS) addBold(label);
+  // Bold Limon slogan (from "Limon Jobs" to end of that line, whatever dash the AI used)
+  const limonLine = lines.find((l) => l.includes("Limon Jobs"));
+  if (limonLine) addBold(limonLine.slice(limonLine.indexOf("Limon Jobs")));
+
+  // Keep the existing Limon link
+  const linkOffset = message.indexOf(LIMON_TEXT);
+  if (linkOffset >= 0) {
+    entities.push(
+      new Api.MessageEntityTextUrl({ offset: linkOffset, length: LIMON_TEXT.length, url: LIMON_URL })
+    );
+  }
+
+  entities.sort((a, b) => a.offset - b.offset);
+  return { message, entities };
+}
+
 async function scrapeAndPost(): Promise<string | null> {
   if (!sourceChannels.length) return "CC_SOURCE_CHANNELS sozlanmagan";
   if (!channelUsername) return "CC_CHANNEL_USERNAME sozlanmagan";
@@ -353,14 +405,10 @@ async function scrapeAndPost(): Promise<string | null> {
   const candidate = candidates[selected.index];
 
   try {
-    const linkOffset = selected.formatted.indexOf(LIMON_TEXT);
-    const entities: Api.TypeMessageEntity[] =
-      linkOffset >= 0
-        ? [new Api.MessageEntityTextUrl({ offset: linkOffset, length: LIMON_TEXT.length, url: LIMON_URL })]
-        : [];
+    const { message, entities } = buildJobMessage(selected.formatted);
 
     const sent = await client.sendMessage(channelUsername, {
-      message: selected.formatted,
+      message,
       linkPreview: false,
       formattingEntities: entities,
     });
